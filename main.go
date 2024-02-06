@@ -270,7 +270,7 @@ func getPositionFilePath(logFilePath, positionFilesDir string) string {
 func cleanupOldPositionFiles(timeInternal time.Duration, positionFilesDir string) {
 	for {
 		// Sleep for the cleanup interval
-		time.Sleep(timeInternal * time.Hour) //12 * time.Hour
+		time.Sleep(timeInternal) //12 * time.Hour
 
 		// Get the list of position files in the directory
 		positionFiles, err := ioutil.ReadDir(positionFilesDir)
