@@ -19,7 +19,6 @@ import (
 )
 
 var wg sync.WaitGroup
-var positionFilesDir string
 
 func LiveWatchKafkaFeeder(kafkaBrokerAddresses, kafkaTopic, sourceLogsDir, positionFilesDir string, cleanupOldPositionFilesInterval time.Duration) error {
 
@@ -40,12 +39,12 @@ func LiveWatchKafkaFeeder(kafkaBrokerAddresses, kafkaTopic, sourceLogsDir, posit
 	defer producer.Close()
 
 	// Process the latest logs when the program starts
-	err = processLatestLogs(sourceLogsDir, kafkaTopic, producer)
+	err = processLatestLogs(sourceLogsDir, kafkaTopic, producer, positionFilesDir)
 	if err != nil {
 		return fmt.Errorf("error processing latest logs: %v", err)
 	}
 
-	go cleanupOldPositionFiles(cleanupOldPositionFilesInterval)
+	go cleanupOldPositionFiles(cleanupOldPositionFilesInterval, positionFilesDir)
 
 	// Create a new watcher
 	watcher, err := fsnotify.NewWatcher()
@@ -77,7 +76,7 @@ func LiveWatchKafkaFeeder(kafkaBrokerAddresses, kafkaTopic, sourceLogsDir, posit
 						fmt.Printf("Started watching logs for: \n")
 						go func(file string) {
 							defer wg.Done()
-							if err := watchLogFile(event.Name, kafkaTopic, producer); err != nil {
+							if err := watchLogFile(event.Name, kafkaTopic, producer, positionFilesDir); err != nil {
 								log.Fatal(err)
 							}
 						}(event.Name)
@@ -103,7 +102,7 @@ func LiveWatchKafkaFeeder(kafkaBrokerAddresses, kafkaTopic, sourceLogsDir, posit
 
 }
 
-func watchLogFile(logFilePath string, topic string, producer sarama.SyncProducer) error {
+func watchLogFile(logFilePath string, topic string, producer sarama.SyncProducer, positionFilesDir string) error {
 	defer wg.Done() //Remove if not required
 	// Create a new watcher
 	fileWatcher, err := fsnotify.NewWatcher()
@@ -130,7 +129,7 @@ func watchLogFile(logFilePath string, topic string, producer sarama.SyncProducer
 			// Handle new events in the log file (write events)
 			if event.Op&fsnotify.Write == fsnotify.Write {
 				// Process the new content in the log file
-				err := processNewContent(logFilePath, topic, producer)
+				err := processNewContent(logFilePath, topic, producer, positionFilesDir)
 				if err != nil {
 					return fmt.Errorf("error processing new content in log file %s: %v", logFilePath, err)
 				}
@@ -153,7 +152,7 @@ func watchLogFile(logFilePath string, topic string, producer sarama.SyncProducer
 	}
 }
 
-func processNewContent(logFilePath string, topic string, producer sarama.SyncProducer) error {
+func processNewContent(logFilePath string, topic string, producer sarama.SyncProducer, positionFilesDir string) error {
 
 	// Check if the file exists before opening it
 	if _, err := os.Stat(logFilePath); os.IsNotExist(err) {
@@ -170,7 +169,7 @@ func processNewContent(logFilePath string, topic string, producer sarama.SyncPro
 	// Seek to the last processed position
 	// This is where you'd need to retrieve the last processed position from your storage
 	// or wherever it is being tracked.
-	lastProcessedPosition, err := getLastProcessedPosition(logFilePath)
+	lastProcessedPosition, err := getLastProcessedPosition(logFilePath, positionFilesDir)
 	if err != nil {
 		return fmt.Errorf("error getting last processed position for log file %s: %v", logFilePath, err)
 	}
@@ -207,7 +206,7 @@ func processNewContent(logFilePath string, topic string, producer sarama.SyncPro
 	}
 
 	// Save the last processed position for the next iteration
-	err = updateLastProcessedPosition(logFilePath, lastProcessedPosition)
+	err = updateLastProcessedPosition(logFilePath, lastProcessedPosition, positionFilesDir)
 	if err != nil {
 		return fmt.Errorf("error updating last processed position in storage for log file %s: %v", logFilePath, err)
 	}
@@ -215,9 +214,9 @@ func processNewContent(logFilePath string, topic string, producer sarama.SyncPro
 	return nil
 }
 
-func getLastProcessedPosition(logFilePath string) (int64, error) {
+func getLastProcessedPosition(logFilePath, positionFilesDir string) (int64, error) {
 	// Create a filename for storing the last processed position
-	positionFilePath := getPositionFilePath(logFilePath)
+	positionFilePath := getPositionFilePath(logFilePath, positionFilesDir)
 
 	// Read the last processed position from the file
 	content, err := ioutil.ReadFile(positionFilePath)
@@ -244,9 +243,9 @@ func getLastProcessedPosition(logFilePath string) (int64, error) {
 	return lastPosition, nil
 }
 
-func updateLastProcessedPosition(logFilePath string, position int64) error {
+func updateLastProcessedPosition(logFilePath string, position int64, positionFilesDir string) error {
 	// Create a filename for storing the last processed position
-	positionFilePath := getPositionFilePath(logFilePath)
+	positionFilePath := getPositionFilePath(logFilePath, positionFilesDir)
 
 	// Write the updated position to the file
 	err := ioutil.WriteFile(positionFilePath, []byte(fmt.Sprintf("%d", position)), 0644)
@@ -257,7 +256,7 @@ func updateLastProcessedPosition(logFilePath string, position int64) error {
 	return nil
 }
 
-func getPositionFilePath(logFilePath string) string {
+func getPositionFilePath(logFilePath, positionFilesDir string) string {
 
 	// Create the "/position" directory if it doesn't exist
 	if err := os.MkdirAll(positionFilesDir, os.ModePerm); err != nil {
@@ -268,7 +267,7 @@ func getPositionFilePath(logFilePath string) string {
 	return filepath.Join(positionFilesDir, fmt.Sprintf("%s.position", filepath.Base(logFilePath)))
 }
 
-func cleanupOldPositionFiles(timeInternal time.Duration) {
+func cleanupOldPositionFiles(timeInternal time.Duration, positionFilesDir string) {
 	for {
 		// Sleep for the cleanup interval
 		time.Sleep(timeInternal * time.Hour) //12 * time.Hour
@@ -298,7 +297,7 @@ func cleanupOldPositionFiles(timeInternal time.Duration) {
 	}
 }
 
-func processLatestLogs(directory string, topic string, producer sarama.SyncProducer) error {
+func processLatestLogs(directory string, topic string, producer sarama.SyncProducer, positionFilesDir string) error {
 	// Get a list of all log files in the directory
 	files, err := filepath.Glob(filepath.Join(directory, "*.log"))
 	if err != nil {
@@ -318,7 +317,7 @@ func processLatestLogs(directory string, topic string, producer sarama.SyncProdu
 		fmt.Printf("Started watching logs for Initial file: %s\n", file)
 		go func(file string) {
 			defer wg.Done()
-			if err := watchLogFile(file, topic, producer); err != nil {
+			if err := watchLogFile(file, topic, producer, positionFilesDir); err != nil {
 				log.Fatal(err)
 			}
 		}(file)
