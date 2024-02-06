@@ -21,7 +21,7 @@ import (
 var wg sync.WaitGroup
 var positionFilesDir string
 
-func liveWatchKafkaFeeder(kafkaBrokerAddresses, kafkaTopic, sourceLogsDir, positionFilesDir string) error {
+func LiveWatchKafkaFeeder(kafkaBrokerAddresses, kafkaTopic, sourceLogsDir, positionFilesDir string, cleanupOldPositionFilesInterval time.Duration) error {
 
 	// Kafka producer configuration.
 	config := sarama.NewConfig()
@@ -45,7 +45,7 @@ func liveWatchKafkaFeeder(kafkaBrokerAddresses, kafkaTopic, sourceLogsDir, posit
 		return fmt.Errorf("error processing latest logs: %v", err)
 	}
 
-	go cleanupOldPositionFiles()
+	go cleanupOldPositionFiles(cleanupOldPositionFilesInterval)
 
 	// Create a new watcher
 	watcher, err := fsnotify.NewWatcher()
@@ -268,10 +268,10 @@ func getPositionFilePath(logFilePath string) string {
 	return filepath.Join(positionFilesDir, fmt.Sprintf("%s.position", filepath.Base(logFilePath)))
 }
 
-func cleanupOldPositionFiles() {
+func cleanupOldPositionFiles(timeInternal time.Duration) {
 	for {
 		// Sleep for the cleanup interval
-		time.Sleep(3 * time.Hour) //12 * time.Hour
+		time.Sleep(timeInternal * time.Hour) //12 * time.Hour
 
 		// Get the list of position files in the directory
 		positionFiles, err := ioutil.ReadDir(positionFilesDir)
